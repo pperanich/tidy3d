@@ -10,6 +10,7 @@ import autograd.numpy as np
 import pydantic.v1 as pd
 import xarray as xr
 from pandas import DataFrame
+from xarray.core.types import Self
 
 from ...constants import C_0, ETA_0, MICROMETER, MU_0
 from ...exceptions import DataError, SetupError, Tidy3dNotImplementedError, ValidationError
@@ -422,7 +423,7 @@ class ElectromagneticFieldData(AbstractFieldData, ElectromagneticFieldDataset, A
         return [(bs[1:] + bs[:-1]) / 2 for bs in self._plane_grid_boundaries]
 
     @property
-    def _diff_area(self) -> xr.DataArray:
+    def _diff_area(self) -> DataArray:
         """For a 2D monitor data, return the area of each cell in the plane, for use in numerical
         integrations. This assumes that data is colocated to grid boundaries, and uses the
         difference in the surrounding grid centers to compute the area.
@@ -459,7 +460,7 @@ class ElectromagneticFieldData(AbstractFieldData, ElectromagneticFieldDataset, A
         sizes_dim0 = coords[0][1:] - coords[0][:-1] if bounds[0].size > 1 else [1.0]
         sizes_dim1 = coords[1][1:] - coords[1][:-1] if bounds[1].size > 1 else [1.0]
 
-        return xr.DataArray(np.outer(sizes_dim0, sizes_dim1), dims=self._tangential_dims)
+        return DataArray(np.outer(sizes_dim0, sizes_dim1), dims=self._tangential_dims)
 
     def _tangential_corrected(self, fields: Dict[str, DataArray]) -> Dict[str, DataArray]:
         """For a 2D monitor data, extract the tangential components from fields and orient them
@@ -599,7 +600,7 @@ class ElectromagneticFieldData(AbstractFieldData, ElectromagneticFieldDataset, A
 
         return poynting
 
-    def package_flux_results(self, flux_values: xr.DataArray) -> Any:
+    def package_flux_results(self, flux_values: DataArray) -> Any:
         """How to package flux"""
         return FluxDataArray(flux_values)
 
@@ -851,10 +852,10 @@ class ElectromagneticFieldData(AbstractFieldData, ElectromagneticFieldDataset, A
         outer_dim_2: str,
         sum_dims: List[str],
         fn: Callable,
-    ) -> xr.DataArray:
+    ) -> DataArray:
         """
         Loop over ``outer_dim_1`` and ``outer_dim_2``, apply ``fn`` to ``fields_1`` and ``fields_2``, and sum over ``sum_dims``.
-        The resulting ``xr.DataArray`` has has dimensions any dimensions in the fields which are not contained in sum_dims.
+        The resulting ``DataArray`` has has dimensions any dimensions in the fields which are not contained in sum_dims.
         This can be more memory efficient than vectorizing over the ``outer_dims``, which can involve broadcasting and reshaping data.
         It also converts to numpy arrays outside the loops to minimize xarray overhead.
         """
@@ -906,7 +907,7 @@ class ElectromagneticFieldData(AbstractFieldData, ElectromagneticFieldDataset, A
                 data_curr = np.sum(summand_curr, axis=tuple(sum_axes))
                 data[tuple(idx_data)] = data_curr
 
-        return xr.DataArray(data, coords=coords)
+        return DataArray(data, coords=coords)
 
     @property
     def time_reversed_copy(self) -> FieldData:
@@ -1037,7 +1038,7 @@ class FieldData(FieldDataset, ElectromagneticFieldData):
 
             for freq0 in field_component.coords["f"]:
                 omega0 = 2 * np.pi * freq0
-                scaling_factor = 1 / (MU_0 * omega0)
+                scaling_factor = 33 / (MU_0 * omega0)
 
                 forward_amp = self.get_amplitude(field_component.sel(f=freq0))
 
@@ -1067,7 +1068,6 @@ class FieldData(FieldDataset, ElectromagneticFieldData):
         """Create adjoint custom field sources if this field data has some dimensionality."""
 
         sources = []
-
         source_geo = self.monitor.geometry
         freqs = self.monitor.freqs
 
@@ -1076,7 +1076,7 @@ class FieldData(FieldDataset, ElectromagneticFieldData):
             for name, field_component in self.field_components.items():
                 # get the VJP values at frequency and apply adjoint phase
                 field_component = field_component.sel(f=freq0)
-                values = -1j * field_component.values
+                values = 2 * -1j * field_component.values
 
                 # make source go backwards
                 if "H" in name:
@@ -1593,7 +1593,7 @@ class ModeData(ModeSolverDataset, ElectromagneticFieldData):
         new_data["monitor"] = mnt.updated_copy(store_fields_direction=new_dir)
         return self.copy(update=new_data)
 
-    def _colocated_propagation_axes_field(self, field_name: Literal["E", "H"]) -> xr.DataArray:
+    def _colocated_propagation_axes_field(self, field_name: Literal["E", "H"]) -> DataArray:
         """Collect a field DataArray containing all 3 field components and rotate from frame
         with normal axis along z to frame with propagation axis along z.
         """
@@ -1619,7 +1619,7 @@ class ModeData(ModeSolverDataset, ElectromagneticFieldData):
         for dim in fields["Ex"].dims:
             coords.update({dim: fields["Ex"].coords[dim]})
 
-        return xr.DataArray(data=field, coords=coords)
+        return DataArray(data=field, coords=coords)
 
     @cached_property
     def pol_fraction(self) -> xr.Dataset:
@@ -2112,9 +2112,9 @@ class AbstractFieldProjectionData(MonitorData):
         """Dimensions of the radiation vectors contained."""
         return self.Etheta.dims
 
-    def make_data_array(self, data: np.ndarray) -> xr.DataArray:
-        """Make an xr.DataArray with data and same coords and dims as fields of self."""
-        return xr.DataArray(data=data, coords=self.coords, dims=self.dims)
+    def make_data_array(self, data: np.ndarray) -> DataArray:
+        """Make an DataArray with data and same coords and dims as fields of self."""
+        return DataArray(data=data, coords=self.coords, dims=self.dims)
 
     def make_dataset(self, keys: Tuple[str, ...], vals: Tuple[np.ndarray, ...]) -> xr.Dataset:
         """Make an xr.Dataset with keys and data with same coords and dims as fields."""
@@ -2228,7 +2228,7 @@ class AbstractFieldProjectionData(MonitorData):
         return self.make_dataset(keys=keys, vals=field_components)
 
     @property
-    def power(self) -> xr.DataArray:
+    def power(self) -> DataArray:
         """Get power measured on the projection grid relative to the monitor's local origin.
 
         Returns
@@ -2236,14 +2236,14 @@ class AbstractFieldProjectionData(MonitorData):
         ``xarray.DataArray``
             Power at points relative to the local origin.
         """
-        power_theta = 0.5 * np.real(self.Etheta.values * np.conj(self.Hphi.values))
-        power_phi = 0.5 * np.real(-self.Ephi.values * np.conj(self.Htheta.values))
+        power_theta = 0.5 * np.real(self.Etheta * self.Hphi.conj())
+        power_phi = 0.5 * np.real(-self.Ephi * self.Htheta.conj())
         power = power_theta + power_phi
 
         return self.make_data_array(data=power)
 
     @property
-    def radar_cross_section(self) -> xr.DataArray:
+    def radar_cross_section(self) -> DataArray:
         """Radar cross section in units of incident power."""
 
         _, index_k = self.nk
@@ -2483,7 +2483,7 @@ class FieldProjectionCartesianData(AbstractFieldProjectionData):
         return tangential_dims
 
     @property
-    def poynting(self) -> xr.DataArray:
+    def poynting(self) -> DataArray:
         """Time-averaged Poynting vector for field data associated to a Cartesian field projection monitor."""
         fc = self.fields_cartesian
         dim1, dim2 = self.tangential_dims
@@ -2827,17 +2827,17 @@ class DiffractionData(AbstractFieldProjectionData):
         )
 
     @property
-    def angles(self) -> Tuple[xr.DataArray]:
+    def angles(self) -> Tuple[DataArray]:
         """The (theta, phi) angles corresponding to each allowed pair of diffraction
         orders storeds as data arrays. Disallowed angles are set to ``np.nan``.
         """
         thetas, phis = self.compute_angles(self.reciprocal_vectors)
-        theta_data = xr.DataArray(thetas, coords=self.coords)
-        phi_data = xr.DataArray(phis, coords=self.coords)
+        theta_data = DataArray(thetas, coords=self.coords)
+        phi_data = DataArray(phis, coords=self.coords)
         return theta_data, phi_data
 
     @property
-    def amps(self) -> xr.DataArray:
+    def amps(self) -> DataArray:
         """Complex power amplitude in each order for 's' and 'p' polarizations, normalized so that
         the power carried by the wave of that order and polarization equals ``abs(amps)^2``.
         """
@@ -2856,10 +2856,10 @@ class DiffractionData(AbstractFieldProjectionData):
         coords["orders_y"] = np.atleast_1d(self.orders_y)
         coords["f"] = np.atleast_1d(self.f)
         coords["polarization"] = ["s", "p"]
-        return xr.DataArray(np.stack([amp_phi, amp_theta], axis=3), coords=coords)
+        return DataArray(np.stack([amp_phi, amp_theta], axis=3), coords=coords)
 
     @property
-    def power(self) -> xr.DataArray:
+    def power(self) -> Self:
         """Total power in each order, summed over both polarizations."""
         return (np.abs(self.amps) ** 2).sum(dim="polarization")
 
@@ -2914,7 +2914,7 @@ class DiffractionData(AbstractFieldProjectionData):
         """Make an xr.Dataset for fields with given field names."""
         data_arrays = []
         for field in fields:
-            data_arrays.append(xr.DataArray(data=field, coords=self.coords, dims=self.dims))
+            data_arrays.append(DataArray(data=field, coords=self.coords, dims=self.dims))
         return xr.Dataset(dict(zip(keys, data_arrays)))
 
     """ Autograd code """
@@ -2974,7 +2974,7 @@ class DiffractionData(AbstractFieldProjectionData):
         theta_data, phi_data = self.angles
         angle_sel_kwargs = dict(orders_x=int(order_x), orders_y=int(order_y), f=float(freq0))
         angle_theta = float(theta_data.sel(**angle_sel_kwargs))
-        angle_phi = np.pi + float(phi_data.sel(**angle_sel_kwargs))
+        angle_phi = float(phi_data.sel(**angle_sel_kwargs))
 
         # if the angle is nan, this amplitude is set to 0 in the fwd pass, so should skip adj
         if np.isnan(angle_theta):
@@ -3000,7 +3000,7 @@ class DiffractionData(AbstractFieldProjectionData):
             center=self.monitor.center,
             source_time=GaussianPulse(
                 amplitude=abs(src_amp),
-                phase=np.pi + np.angle(src_amp),
+                phase=np.angle(src_amp),
                 freq0=freq0,
                 fwidth=fwidth,
             ),

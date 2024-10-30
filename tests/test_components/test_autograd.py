@@ -11,15 +11,19 @@ import autograd as ag
 import autograd.numpy as anp
 import matplotlib.pylab as plt
 import numpy as np
+import numpy.testing as npt
 import pytest
 import tidy3d as td
 import tidy3d.web as web
 import xarray as xr
+from autograd.test_util import check_grads
 from tidy3d.components.autograd.derivative_utils import DerivativeInfo
+from tidy3d.components.autograd.utils import is_tidy_box
+from tidy3d.components.data.data_array import DataArray
 from tidy3d.web import run, run_async
 from tidy3d.web.api.autograd.utils import FieldMap
 
-from ..utils import SIM_FULL, AssertLogLevel, run_emulated
+from ..utils import SIM_FULL, AssertLogLevel, run_emulated, tracer_arr
 
 """ Test configuration """
 
@@ -277,6 +281,7 @@ def make_structures(params: anp.ndarray) -> dict[str, td.Structure]:
     size_element = td.Structure(
         geometry=td.Box(center=(0, 0, 0), size=(1, size_y, 1)),
         medium=med,
+        background_permittivity=5.0,
     )
 
     # custom medium with variable permittivity data
@@ -989,12 +994,115 @@ def test_interp_objectives(use_emulated_run, colocate, objtype):
         data = run(sim, task_name="autograd_test", verbose=False)
 
         if objtype == "flux":
-            return anp.sum(data[monitor.name].flux.values)
+            return data[monitor.name].flux.item()
         elif objtype == "intensity":
             return anp.sum(data.get_intensity(monitor.name).values)
 
     grads = ag.grad(objective)(params0)
     assert np.any(grads > 0)
+
+
+@pytest.mark.parametrize("far_field_approx", [True, False])
+@pytest.mark.parametrize("projection_type", ["angular", "cartesian"])
+@pytest.mark.parametrize("sim_2d", [True, False])
+class TestFieldProjection:
+    @staticmethod
+    def setup(far_field_approx, projection_type, sim_2d):
+        if sim_2d and not far_field_approx:
+            pytest.skip("Exact field projection not implemented for 2d simulations")
+
+        r_proj = 50 * WVL
+        monitor = td.FieldMonitor(
+            center=(0, SIM_BASE.size[1] / 2 - 0.1, 0),
+            size=(td.inf, 0, td.inf),
+            freqs=[FREQ0],
+            name="near_field",
+            colocate=False,
+        )
+
+        if projection_type == "angular":
+            theta_proj = np.linspace(np.pi / 10, np.pi - np.pi / 10, 2)
+            phi_proj = np.linspace(np.pi / 10, np.pi - np.pi / 10, 3)
+            monitor_far = td.FieldProjectionAngleMonitor(
+                center=monitor.center,
+                size=monitor.size,
+                freqs=monitor.freqs,
+                phi=tuple(phi_proj),
+                theta=tuple(theta_proj),
+                proj_distance=r_proj,
+                far_field_approx=far_field_approx,
+                name="far_field",
+            )
+        elif projection_type == "cartesian":
+            x_proj = np.linspace(-10, 10, 2)
+            y_proj = np.linspace(-10, 10, 3)
+            monitor_far = td.FieldProjectionCartesianMonitor(
+                center=monitor.center,
+                size=monitor.size,
+                freqs=monitor.freqs,
+                x=x_proj,
+                y=y_proj,
+                proj_axis=1,
+                proj_distance=r_proj,
+                far_field_approx=far_field_approx,
+                name="far_field",
+            )
+
+        sim = SIM_BASE.updated_copy(monitors=[monitor])
+
+        if sim_2d and IS_3D:
+            sim = sim.updated_copy(size=(0, *sim.size[1:]))
+
+        return sim, monitor_far
+
+    @staticmethod
+    def objective(sim_data, monitor_far):
+        projector = td.FieldProjector.from_near_field_monitors(
+            sim_data=sim_data,
+            near_monitors=[sim_data.simulation.monitors[0]],
+            normal_dirs=["+"],
+        )
+
+        projected_fields = projector.project_fields(monitor_far)
+
+        return projected_fields.power.sum().item()
+
+    def test_field_projection_grad_prop(
+        self, use_emulated_run, far_field_approx, projection_type, sim_2d
+    ):
+        """Tests whether field projection gradients are propagated through simulation.
+        x0 <-> structures <-> sim <-> run <-> fields <-> projection <-> objval
+        Does _not_ test gradient accuracy!
+        """
+        sim_base, monitor_far = self.setup(far_field_approx, projection_type, sim_2d)
+
+        def objective(args):
+            structures_traced_dict = make_structures(args)
+            structures = list(SIM_BASE.structures)
+            for structure_key in structure_keys_:
+                structures.append(structures_traced_dict[structure_key])
+
+            sim = sim_base.updated_copy(structures=structures)
+            sim_data = run(sim, task_name="field_projection_test")
+
+            return self.objective(sim_data, monitor_far)
+
+        grads = ag.grad(objective)(params0)
+        assert np.linalg.norm(grads) > 0
+
+    def test_field_projection_grads(
+        self, use_emulated_run, far_field_approx, projection_type, sim_2d
+    ):
+        """Tests projection gradient accuracy w.r.t. fields.
+        fields <-> projection <-> objval
+        """
+        sim_base, monitor_far = self.setup(far_field_approx, projection_type, sim_2d)
+
+        def objective(x0):
+            sim_data = run_emulated(sim_base, task_name="field_projection_test", x0=x0)
+            return self.objective(sim_data, monitor_far)
+
+        check_grads(objective, modes=["rev"], order=1)(1.0)
 
 
 def test_autograd_deepcopy():
@@ -1493,6 +1601,53 @@ def test_extraneous_field(use_emulated_run, log_capture):
         )
         data = run(sim, task_name="extra_field")
         amp = data["mode"].amps.sel(direction="+", f=FREQ0 * 0.9, mode_index=0).values
-        return abs(anp.squeeze(amp.tolist())) ** 2
+        return abs(amp.item()) ** 2
 
     g = ag.grad(objective)(params0)
+
+
+class TestTidyArrayBox:
+    def test_is_tidy_box(self):
+        da = DataArray(tracer_arr, dims=map(str, range(tracer_arr.ndim)))
+        assert is_tidy_box(da.data)
+
+    def test_real(self):
+        npt.assert_allclose(tracer_arr.real._value, tracer_arr._value.real)
+
+    def test_imag(self):
+        npt.assert_allclose(tracer_arr.imag._value, tracer_arr._value.imag)
+
+    def test_conj(self):
+        npt.assert_allclose(tracer_arr.conj()._value, tracer_arr._value.conj())
+
+    def test_item(self):
+        assert tracer_arr.item() == tracer_arr._value.item()
+
+
+class TestDataArrayGrads:
+    @pytest.mark.parametrize("attr", ["real", "imag", "conj"])
+    def test_custom_methods_grads(self, attr):
+        """Test grads of TidyArrayBox methods implemented in autograd/boxes.py"""
+
+        def objective(x, attr):
+            da = DataArray(x)
+            attr_value = getattr(da, attr)
+            val = attr_value() if callable(attr_value) else attr_value
+            return val.item()
+
+        x = np.array([1.0])
+        check_grads(objective, modes=["fwd", "rev"], order=2)(x, attr)
+
+    def test_multiply_at_grads(self, rng):
+        """Test grads of DataArray.multiply_at method"""
+
+        def objective(a, b):
+            coords = {str(i): np.arange(a.shape[i]) for i in range(a.ndim)}
+            da = DataArray(a, coords=coords)
+            da_mult = da.multiply_at(b, "0", [0, 1]) ** 2
+            return np.sum(da_mult).item()
+
+        a = rng.uniform(-1, 1, (3, 3))
+        b = 1.0
+        check_grads(lambda x: objective(x, b), modes=["fwd", "rev"], order=2)(a)
+        check_grads(lambda x: objective(a, x), modes=["fwd", "rev"], order=2)(b)

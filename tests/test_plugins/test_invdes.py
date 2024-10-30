@@ -297,6 +297,7 @@ def make_result(use_emulated_run):  # noqa: F811
     """Test running the optimization defined in the ``InverseDesign`` object."""
 
     optimizer = make_optimizer()
+    optimizer.validate_pre_upload()
 
     return optimizer.run(post_process_fn=post_process_fn)
 
@@ -584,6 +585,16 @@ def test_initial_simulation_multi():
         assert sim.structures[-1] == invdes_multi.design_region.to_structure(
             invdes_multi.design_region.initial_parameters
         )
+
+
+def test_metric_scalar_freq():
+    invdes = make_invdes()
+    metric = ModePower(monitor_name=MNT_NAME2, mode_index=0, f=FREQ0)
+    monitor = mnt2.updated_copy(freqs=[FREQ0, FREQ0 / 2])
+    invdes = invdes.updated_copy(
+        metric=metric,
+        simulation=simulation.updated_copy(monitors=[monitor]),
+    )
 
 
 def test_validate_invdes_metric():

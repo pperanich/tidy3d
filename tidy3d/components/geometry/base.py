@@ -2433,7 +2433,7 @@ class Box(SimplePlaneIntersection, Centered):
         eps_xyz = [derivative_info.eps_data[f"eps_{dim}{dim}"] for dim in "xyz"]
 
         # number of cells from the edge of data to register "inside" (index = num_cells_in - 1)
-        num_cells_in = 3
+        num_cells_in = 4
 
         # if not enough data, just use best guess using eps in medium and simulation
         needs_eps_approx = any(len(eps.coords[dim_normal]) <= num_cells_in for eps in eps_xyz)
@@ -2463,7 +2463,7 @@ class Box(SimplePlaneIntersection, Centered):
         def integrate_face(arr: xr.DataArray) -> complex:
             """Interpolate and integrate a scalar field data over the face using bounds."""
 
-            arr_at_face = arr.interp(**{dim_normal: coord_normal_face})
+            arr_at_face = arr.interp(**{dim_normal: coord_normal_face}, assume_sorted=True)
 
             integral_result = integrate_within_bounds(
                 arr=arr_at_face,

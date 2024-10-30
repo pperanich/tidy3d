@@ -1,3 +1,5 @@
+# Changelog
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -5,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.6] - 2024-10-30
+
+### Added
+- Users can pass the `shading` argument in the `SimulationData.plot_field` to `Xarray.plot` method. When `shading='gouraud'`, the image is interpolated, producing a smoother visualization.
+- Users can manually specify the background medium for a structure to be used for geometry gradient calculations by supplying `Structure.background_permittivity`. This is useful when there are overlapping structures or structures embedded in other mediums.
+- Autograd functions can now be called directly on `DataArray` (e.g., `np.sum(data_array)`) in objective functions.
+- Automatic differentiation support for local field projections with `FieldProjectionAngleMonitor` and `FieldProjectionCartesianMonitor` using `FieldProjector.project_fields(far_field_monitor)`.
+
+### Changed
+- Improved autograd tracer handling in `DataArray`, resulting in significant speedups for differentiation involving large monitors.
+- Triangulation of `PolySlab` polygons now supports polygons with collinear vertices.
+
+### Fixed
+- Minor gradient direction and normalization fixes for polyslab, field monitors, and diffraction monitors in autograd.
+- Resolved an issue where temporary files for adjoint simulations were not being deleted properly.
+- Resolve several edge cases where autograd boxes were incorrectly converted to numpy arrays.
+- Resolve issue where scalar frequencies in metric definitions (`ModeAmp(f=freq)` instead of `ModeAmp(f=[freq])`) would erroneously fail validation.
 
 ## [2.7.5] - 2024-10-16
 
@@ -1338,7 +1357,8 @@ which fields are to be projected is now determined automatically based on the me
 - Job and Batch classes for better simulation handling (eventually to fully replace webapi functions).
 - A large number of small improvements and bug fixes.
 
-[Unreleased]: https://github.com/flexcompute/tidy3d/compare/v2.7.5...develop
+[Unreleased]: https://github.com/flexcompute/tidy3d/compare/v2.7.6...develop
+[2.7.6]: https://github.com/flexcompute/tidy3d/compare/v2.7.5...v2.7.6
 [2.7.5]: https://github.com/flexcompute/tidy3d/compare/v2.7.4...v2.7.5
 [2.7.4]: https://github.com/flexcompute/tidy3d/compare/v2.7.3...v2.7.4
 [2.7.3]: https://github.com/flexcompute/tidy3d/compare/v2.7.2...v2.7.3
