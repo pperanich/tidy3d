@@ -335,6 +335,7 @@ def download_file(
             Filename=str(to_file),
             Key=token.get_s3_key(),
             Callback=_callback,
+            Config=_s3_config,
         )
 
     if progress_callback is not None:
